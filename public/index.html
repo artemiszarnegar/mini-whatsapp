@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mini WhatsApp with Group Messaging</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+      }
+      .container {
+        max-width: 600px;
+        margin: auto;
+      }
+      .form-group {
+        margin-bottom: 1rem;
+      }
+      input,
+      select {
+        width: 100%;
+        padding: 8px;
+        margin-bottom: 10px;
+      }
+      button {
+        padding: 10px 20px;
+        margin-top: 10px;
+      }
+      .chat-box {
+        border: 1px solid #ccc;
+        padding: 10px;
+        height: 200px;
+        overflow-y: scroll;
+        margin-bottom: 10px;
+      }
+      .toggle-link {
+        color: blue;
+        cursor: pointer;
+        text-decoration: underline;
+      }
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h2>Mini WhatsApp</h2>
+      <div id="group-member-section">
+        <h3>Group Members</h3>
+        <div id="group-members-list"></div>
+      </div>
+      <!-- Register and Login Links -->
+      <p id="toggle-login-register">
+        Already have an account?
+        <span class="toggle-link" onclick="showLogin()">Log In</span> or
+        <span class="toggle-link" onclick="showRegister()">Register</span>
+      </p>
+
+      <!-- Registration Form -->
+      <div id="register-section" class="hidden">
+        <h3>Register</h3>
+        <div class="form-group">
+          <input type="text" id="register-username" placeholder="Username" />
+        </div>
+        <div class="form-group">
+          <input
+            type="password"
+            id="register-password"
+            placeholder="Password"
+          />
+        </div>
+        <button onclick="register()">Register</button>
+      </div>
+
+      <!-- Login Form -->
+      <div id="login-section" class="hidden">
+        <h3>Login</h3>
+        <div class="form-group">
+          <input type="text" id="login-username" placeholder="Username" />
+        </div>
+        <div class="form-group">
+          <input type="password" id="login-password" placeholder="Password" />
+        </div>
+        <button onclick="login()">Login</button>
+      </div>
+
+      <!-- Logged In Status and Group Creation -->
+      <div id="logged-in-section" class="hidden">
+        <h3>Welcome, <span id="logged-in-user"></span>!</h3>
+        <button onclick="logout()">Logout</button>
+        <button onclick="showGroupCreation()">Create Group</button>
+        <!-- Button to show group creation form -->
+      </div>
+
+      <!-- Group Creation Form -->
+      <div id="group-creation-section" class="hidden">
+        <h3>Create Group</h3>
+        <div class="form-group">
+          <input type="text" id="group-name-input" placeholder="Group Name" />
+        </div>
+        <div class="form-group">
+          <select id="group-members-select" multiple style="height: 100px">
+            <!-- Multi-select dropdown for members -->
+            <!-- Options will be populated dynamically -->
+          </select>
+        </div>
+        <button onclick="createGroup()">Create Group</button>
+      </div>
+
+      <!-- Chat Section -->
+      <div id="chat-section" class="hidden">
+        <h3>Chat</h3>
+        <div class="form-group">
+          <select id="recipient-select">
+            <option value="">Select recipient or group</option>
+          </select>
+        </div>
+        <div class="chat-box" id="chat-box"></div>
+        <input
+          type="text"
+          id="message-input"
+          placeholder="Type your message..."
+        />
+        <input type="file" id="file-input" />
+        <!-- File input for attachments -->
+        <button onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      let socket;
+      let token;
+      let loggedInUsername;
+
+      // Toggle functions to switch between login and registration
+      function showLogin() {
+        document.getElementById("login-section").classList.remove("hidden");
+        document.getElementById("register-section").classList.add("hidden");
+      }
+
+      function showRegister() {
+        document.getElementById("register-section").classList.remove("hidden");
+        document.getElementById("login-section").classList.add("hidden");
+      }
+
+      // Show Group Creation Form
+      function showGroupCreation() {
+        document
+          .getElementById("group-creation-section")
+          .classList.remove("hidden");
+        loadUsersForGroup(); // Load users when showing the group creation form
+      }
+
+      // Load all users into the multi-select dropdown for group creation
+      async function loadUsersForGroup() {
+        const response = await fetch("/users", {
+          headers: { Authorization: token },
+        });
+
+        if (response.ok) {
+          const users = await response.json();
+          const select = document.getElementById("group-members-select");
+          select.innerHTML = ""; // Clear previous options
+          users.forEach((user) => {
+            const option = document.createElement("option");
+            option.value = user;
+            option.textContent = user;
+            select.appendChild(option);
+          });
+        } else {
+          alert("Failed to load users for group creation.");
+        }
+      }
+
+      // Create a new group
+      async function createGroup() {
+        const groupName = document.getElementById("group-name-input").value;
+        const members = Array.from(
+          document.getElementById("group-members-select").selectedOptions
+        ).map((option) => option.value); // Get selected members
+
+        const response = await fetch("/groups", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: token },
+          body: JSON.stringify({ groupName, members }),
+        });
+
+        if (response.ok) {
+          alert("Group created successfully!");
+          document
+            .getElementById("group-creation-section")
+            .classList.add("hidden"); // Hide form after creation
+          loadGroups(); // Reload the group options in the dropdown
+        } else {
+          alert("Failed to create group.");
+        }
+      }
+
+      // Registration Function
+      async function register() {
+        const username = document.getElementById("register-username").value;
+        const password = document.getElementById("register-password").value;
+
+        const response = await fetch("/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+
+        if (response.ok) {
+          alert("Registration successful. Please log in.");
+          showLogin(); // After registration, switch to login form
+        } else {
+          alert("Error registering user.");
+        }
+      }
+      async function fetchGroupMembers() {
+        const recipientSelect = document.getElementById("recipient-select");
+        const selectedValue = recipientSelect.value;
+
+        // Check if the selected value is a group
+        if (selectedValue.startsWith("Group:")) {
+          const groupName = selectedValue.replace("Group: ", "");
+
+          // Fetch the group members
+          const response = await fetch(`/groups/${groupName}/members`, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            const members = data.members;
+
+            // Display the group members
+            const groupMembersList =
+              document.getElementById("group-members-list");
+            groupMembersList.innerHTML = ""; // Clear the previous list
+            members.forEach((member) => {
+              const memberElement = document.createElement("p");
+              memberElement.textContent = member;
+              groupMembersList.appendChild(memberElement);
+            });
+
+            // Show the group members section
+            document
+              .getElementById("group-member-section")
+              .classList.remove("hidden");
+          } else {
+            alert("Failed to load group members");
+          }
+        } else {
+          // If not a group, hide the group members section
+          document
+            .getElementById("group-member-section")
+            .classList.add("hidden");
+        }
+      }
+      // Login Function
+      async function login() {
+        const username = document.getElementById("login-username").value;
+        const password = document.getElementById("login-password").value;
+
+        const response = await fetch("/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+
+        const data = await response.json();
+        if (response.ok) {
+          token = data.token;
+          loggedInUsername = username; // Save the logged-in username
+          document.getElementById("logged-in-user").textContent =
+            loggedInUsername; // Show username
+          alert("Login successful!");
+
+          document.getElementById("login-section").classList.add("hidden");
+          document
+            .getElementById("logged-in-section")
+            .classList.remove("hidden"); // Show logged-in status
+          document.getElementById("chat-section").classList.remove("hidden"); // Show chat section
+
+          initializeChat();
+
+          // Set the username for the socket after login
+          socket.emit("set username", username);
+
+          loadGroups(); // Load available groups and users
+        } else {
+          alert("Invalid login credentials.");
+        }
+      }
+
+      // Initialize Socket.io and Listen for Chat Messages
+      function initializeChat() {
+        socket = io({
+          query: { token },
+        });
+
+        // Listen for incoming private messages
+        socket.on("private message", (message) => {
+          const chatBox = document.getElementById("chat-box");
+          const msgElement = document.createElement("p");
+          if (message.fileUrl) {
+            msgElement.innerHTML = `${message.sender}: <a href="${message.fileUrl}" target="_blank">View attachment</a>`;
+          } else {
+            msgElement.textContent = `${message.sender}: ${message.content}`;
+          }
+          chatBox.appendChild(msgElement);
+          chatBox.scrollTop = chatBox.scrollHeight; // Scroll to the bottom
+        });
+
+        // Listen for incoming group messages
+        socket.on("group message", (message) => {
+          const chatBox = document.getElementById("chat-box");
+          const msgElement = document.createElement("p");
+          if (message.fileUrl) {
+            msgElement.innerHTML = `${message.sender} (in ${message.groupName}): <a href="${message.fileUrl}" target="_blank">View attachment</a>`;
+          } else {
+            msgElement.textContent = `${message.sender} (in ${message.groupName}): ${message.content}`;
+          }
+          chatBox.appendChild(msgElement);
+          chatBox.scrollTop = chatBox.scrollHeight; // Scroll to the bottom
+        });
+      }
+
+      // Load all groups and users into the dropdown menu
+      async function loadGroups() {
+        const responseUsers = await fetch("/users", {
+          headers: { Authorization: token },
+        });
+
+        const responseGroups = await fetch("/groups", {
+          headers: { Authorization: token },
+        });
+
+        if (responseUsers.ok && responseGroups.ok) {
+          const users = await responseUsers.json();
+          const groups = await responseGroups.json();
+
+          const recipientSelect = document.getElementById("recipient-select");
+          recipientSelect.innerHTML = ""; // Clear existing options
+
+          // Add users to the dropdown
+          users.forEach((user) => {
+            const option = document.createElement("option");
+            option.value = user;
+            option.textContent = `User: ${user}`;
+            recipientSelect.appendChild(option);
+          });
+
+          // Add groups to the dropdown
+          groups.forEach((group) => {
+            const option = document.createElement("option");
+            option.value = group.name;
+            option.textContent = `Group: ${group.name}`;
+            recipientSelect.appendChild(option);
+          });
+        } else {
+          alert("Failed to load users or groups.");
+        }
+      }
+
+      // Send Message (either private or group message)
+      async function sendMessage() {
+        const messageInput = document.getElementById("message-input");
+        const content = messageInput.value;
+        const recipient = document.getElementById("recipient-select").value;
+        const fileInput = document.getElementById("file-input");
+
+        let fileUrl = null;
+
+        // Handle file upload (same as before)
+        if (fileInput.files.length > 0) {
+          const formData = new FormData();
+          formData.append("file", fileInput.files[0]);
+
+          const fileUploadResponse = await fetch("/upload", {
+            method: "POST",
+            headers: { Authorization: token },
+            body: formData,
+          });
+
+          if (fileUploadResponse.ok) {
+            const fileData = await fileUploadResponse.json();
+            fileUrl = fileData.fileUrl;
+          } else {
+            alert("File upload failed.");
+            return;
+          }
+        }
+
+
+        if (recipient.startsWith('Group:')) {
+          
+                const groupName = recipient.replace('Group: ', '');
+                alert({groupName});
+                socket.emit('send message', {
+                    sender: loggedInUsername,
+                    recipient: `Group: ${groupName}`,
+                    content
+                });
+            } else {
+                socket.emit('send message', {
+                    sender: loggedInUsername,
+                    recipient: recipient.replace('User: ', ''),
+                    content
+                });
+            }
+          
+
+        if (recipient && (content || fileUrl)) {
+          // Emit the message using Socket.io for either a private or group message
+          alert(recipient);
+
+
+
+          socket.emit("send message", {
+            recipient,
+            content,
+            fileUrl,
+          });
+
+          // Show the sent message in the sender's chat box
+          const chatBox = document.getElementById("chat-box");
+          const msgElement = document.createElement("p");
+          if (fileUrl) {
+            msgElement.innerHTML = `You (to ${recipient}): <a href="${fileUrl}" target="_blank">View attachment</a>`;
+          } else {
+            msgElement.textContent = `You (to ${recipient}): ${content}`;
+          }
+          chatBox.appendChild(msgElement);
+          chatBox.scrollTop = chatBox.scrollHeight; // Scroll to the bottom
+
+          messageInput.value = ""; // Clear the message input
+          fileInput.value = ""; // Clear the file input
+        }
+      }
+
+      // Logout Function
+      function logout() {
+        token = null;
+        loggedInUsername = null;
+
+        // Reset UI
+        document.getElementById("logged-in-section").classList.add("hidden");
+        document.getElementById("chat-section").classList.add("hidden");
+        document.getElementById("login-section").classList.remove("hidden");
+
+        alert("Logged out successfully.");
+      }
+    </script>
+  </body>
+</html>
